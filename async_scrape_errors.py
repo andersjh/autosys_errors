@@ -4,12 +4,14 @@ import pandas as pd
 import asyncio
 import httpx
 import time
+import warnings
 
 
 def get_error_list():
+    warnings.filterwarnings("ignore", message="Unverified")
     url = "https://techdocs.broadcom.com/us/en/ca-enterprise-software/intelligent-automation/autosys-workload-automation/12-0-01/messages/error-messages.html"
     # Retrieve page with the requests module
-    response = requests.get(url)
+    response = requests.get(url, verify=False)
     # Create BeautifulSoup object; parse with 'html.parser'
     soup = BeautifulSoup(response.text, 'html.parser')
     error_msgs = []
@@ -29,7 +31,7 @@ def get_error_list():
     return error_msgs
 
 async def get_error_details(msg_index, msg_dict):
-    async with httpx.AsyncClient(timeout=None) as client:
+    async with httpx.AsyncClient(timeout=None, verify=False) as client:
         href = msg_dict['link']
         error_key = msg_dict['key']
         response = await client.get(href, timeout=None)
