@@ -1,16 +1,17 @@
-
-# Dependencies
 from bs4 import BeautifulSoup
 import requests
 import pandas as pd
+import asyncio
+import httpx
 import time
+import warnings
 
-start_time = time.monotonic()
 
 def get_error_list():
+    warnings.filterwarnings("ignore", message="Unverified")
     url = "https://techdocs.broadcom.com/us/en/ca-enterprise-software/intelligent-automation/autosys-workload-automation/12-0-01/messages/error-messages.html"
     # Retrieve page with the requests module
-    response = requests.get(url)
+    response = requests.get(url, verify=False)
     # Create BeautifulSoup object; parse with 'html.parser'
     soup = BeautifulSoup(response.text, 'html.parser')
     error_msgs = []
@@ -29,55 +30,62 @@ def get_error_list():
 
     return error_msgs
 
+async def get_error_details(msg_index, msg_dict):
+    async with httpx.AsyncClient(timeout=None, verify=False) as client:
+        href = msg_dict['link']
+        error_key = msg_dict['key']
+        response = await client.get(href, timeout=None)
+        response_html = response.text
 
-        
-def get_error_details(msg_index, msg_dict):
-    href = msg_dict['link']
-    error_key = msg_dict['key']
-    response = requests.get(href)
-    response_html = response.text
+        error_soup = BeautifulSoup(response_html, 'html.parser')
+        info = error_soup.find_all('div', class_="div")
+        if info:
+            info_divs = info[0].find_all('div', class_="p")
+            this_reason = False
+            this_action = False
+            for i in info_divs:
+                bold_found = i.find('b')
+                if this_reason:
+                    this_reason = False
+                    msg_dict['reason'] = i.find('div').text
+                elif this_action:
+                    cur_action = i.find('div').text
+                    if cur_action == "Required action unknown.":
+                        cur_action = ""
+                    msg_dict['action'] = cur_action  
+                    this_action = False
+                if bold_found:
+                    bold_text = bold_found.find('div').text
+                    if bold_text == "Reason:":
+                        this_reason = True
+                    elif bold_text == "Action:":
+                        this_action = True
+        print(msg_index, msg_dict['key'])
 
-    error_soup = BeautifulSoup(response_html, 'html.parser')
-    info = error_soup.find_all('div', class_="div")
-    if info:
-        info_divs = info[0].find_all('div', class_="p")
-        this_reason = False
-        this_action = False
-        for i in info_divs:
-            bold_found = i.find('b')
-            if this_reason:
-                this_reason = False
-                msg_dict['reason'] = i.find('div').text
-            elif this_action:
-                cur_action = i.find('div').text
-                if cur_action == "Required action unknown.":
-                    cur_action = ""
-                msg_dict['action'] = cur_action  
-                this_action = False
-            if bold_found:
-                bold_text = bold_found.find('div').text
-                if bold_text == "Reason:":
-                    this_reason = True
-                elif bold_text == "Action:":
-                    this_action = True
-    # print(msg_index, ['key'])
-
-def main():
+async def main():
     error_msgs = get_error_list()
+    print(f"We have {len(error_msgs)} to process!")
 
-    for cur_index, cur_msg in enumerate(error_msgs):
-        print(cur_index, cur_msg['key'])
-        get_error_details(cur_index, cur_msg)      
+    task_list = []
+    for index, msg in enumerate(error_msgs):
+        task_list.append(get_error_details(index, msg))
+        if index // 10 == 0:
+            await asyncio.gather(*task_list)
+            task_list = []
+            await asyncio.sleep(.25)
 
-    df = pd.DataFrame(error_msgs)
-
-    df.to_csv('error_msgs.csv', index=False)
-    print("All done")
-    print(f"This took {time.monotonic() - start_time} seconds")
+    await asyncio.gather(*task_list)        
+    return error_msgs
 
 if __name__ == "__main__":
-    main()
+    start_time = time.monotonic()
+    error_messages = asyncio.run(main())
+    print("all done")
+    print(error_messages[1568])
+    print(f"total errors {len(error_messages)}")
+    df = pd.DataFrame(error_messages)
+    df.to_csv('error_msgs_async.csv', index=False)
+    print(f"This took : {time.monotonic() - start_time} seconds")
 
-
-
-
+    
+            
